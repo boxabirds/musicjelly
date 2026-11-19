@@ -172,7 +172,8 @@ export class JellyBody {
 
     this.eyes = this.makeEyes(polys, box, bind);
     this.grab = null; this.sleeping = false; this.quiet = 0; this.press = 0; this.spawnAt = 0; this.visible = true;
-    this.letter = ch; this.lid = 0; this.lidNow = 0; this.startledUntil = 0;      // lid: how far shut the eyes should be (0 open .. 1 asleep)
+    // homeZ: how far its home is from the line z = 0 (the plinth is behind it). lid: how far shut the eyes should be (0 open .. 1 asleep)
+    this.letter = ch; this.homeZ = 0; this.lid = 0; this.lidNow = 0; this.startledUntil = 0;
   }
 
   makeEyes(polys, box, bind) {
@@ -196,10 +197,10 @@ export class JellyBody {
 
   place(drop, tilt) {
     // it stands on, or falls towards, whatever is solid where it is put (a key, a ledge over a finger, the table)
-    const c = Math.cos(tilt), s = Math.sin(tilt), cy = this.height / 2, base = this.stage.terrain.heightAt(this.cx + this.restMean[0], this.restMean[2]);
+    const c = Math.cos(tilt), s = Math.sin(tilt), cy = this.height / 2, base = this.stage.terrain.heightAt(this.cx + this.restMean[0], this.homeZ + this.restMean[2]);
     for (let i = 0; i < this.N; i++) {
       const x = this.rest[i * 3], y = this.rest[i * 3 + 1] - cy;
-      this.x[i * 3] = this.cx + x * c - y * s; this.x[i * 3 + 1] = base + cy + drop + x * s + y * c; this.x[i * 3 + 2] = this.rest[i * 3 + 2];
+      this.x[i * 3] = this.cx + x * c - y * s; this.x[i * 3 + 1] = base + cy + drop + x * s + y * c; this.x[i * 3 + 2] = this.homeZ + this.rest[i * 3 + 2];
     }
     this.prev.set(this.x); this.v.fill(0); this.grab = null; this.wake(); this.updateBox();
     for (const e of this.eyes) e.first = true;
@@ -557,6 +558,7 @@ const SUN = { colour: '#fff6e6', strength: 2.6, shadowMap: 4096, from: [0.6, 1.8
 const FLOOR = { size: 48, tiles: 300, dim: 0.42 };
 const DROP_FROM = 4.5;                                   // sizes above its key a letter starts its fall
 const HAPPY_HOP = 0.22;
+const STRANDED = { seconds: 8, far: 0.3 };               // away from home (by this share of a size, or fallen) for this long, in nobody's grip: it pops home
 // a letter on its own key: how near home (share of a letter's size, along and across the keys) and how low above the
 // ground there (its middle, share of size) it must be to count as on it; backS: the time in which it drifts back over
 // its spot. SLING.most: the fastest it may be going up there (about 19 mm of flight at this gravity).
@@ -593,10 +595,11 @@ export class JellyWorld {
   }
   // A new letter, standing at homeX on the home line once it has fallen from the sky.
   // `key`: which key it belongs to (the page's own number for it). `after`: seconds before it appears and falls.
-  addLetter(ch, colour, homeX, key, after = 0) {
+  // `from`: how many sizes above its key it starts.
+  addLetter(ch, colour, homeX, key, after = 0, from = DROP_FROM) {
     const b = new JellyBody(this, ch, colour, homeX, this.opts.size);
     this.bodies.push(b); this.scene.add(b.mesh, b.glow); b.eyes.forEach((e) => this.scene.add(e.ball, e.pupil));
-    b.key = key; b.place(this.opts.size * DROP_FROM, 0); b.spawnAt = this.t + after; b.visibleNow(false);
+    b.key = key; b.place(this.opts.size * from, 0); b.spawnAt = this.t + after; b.visibleNow(false);
     return b;
   }
   onKey(key) { return this.bodies.find((b) => b.key === key); }
@@ -722,7 +725,7 @@ export class JellyWorld {
     const B = this.bodies, size = this.opts.size, gap = size * .14;
     const drop = (b) => { if (b.carry) { if (b.grab === b.carry) b.grab = null; b.carry = null; b.wake(); } };
     if (this.drag || B.some((b) => this.t < b.spawnAt)) { if (this.homing) B.forEach(drop); this.homing = false; this.calm = 0; return; }
-    const home = (b) => [b.homeX + b.restMean[0], b.restMean[2]];
+    const home = (b) => [b.homeX + b.restMean[0], b.homeZ + b.restMean[2]];
     const atHome = (b, c) => { const [hx, hz] = home(b); return Math.abs(c[0] - hx) < size * .1 && Math.abs(c[2] - hz) < size * .2; };
     const centers = new Map(B.map((b) => [b, b.center()]));
     const still = this.still = B.every((b) => !b.grab && !b.isFallen() && (b.sleeping || (b.grounded && b.rms < .03)));
@@ -832,7 +835,7 @@ export class JellyWorld {
   ride(h) {
     const size = this.opts.size;
     for (const b of this.bodies) {
-      const hx = b.homeX + b.restMean[0], hz = b.restMean[2], ground = this.terrain.heightAt(hx, hz);
+      const hx = b.homeX + b.restMean[0], hz = b.homeZ + b.restMean[2], ground = this.terrain.heightAt(hx, hz);
       let rides = this.t >= b.spawnAt && !b.grab && !b.carry, c = null;
       if (rides) { c = b.center(); rides = Math.abs(c[0] - hx) < RIDE.near * size && Math.abs(c[2] - hz) < RIDE.near * size && c[1] - ground < RIDE.above * size && c[1] > ground && !b.isFallen(); }
       if (rides !== !!b.riding) { b.riding = rides; this.opts.onRide?.(b, rides); }
@@ -852,6 +855,15 @@ export class JellyWorld {
       if (b.restTime > 1.1) { b.restTime = 0; b.standUpIfFallen(); }
     }
     this.shuffleHome(dt);
+    // Stranded: tidying only begins once every letter is standing still, and a letter caught under the hand never is
+    // (the hand's balls keep pressing it), so nobody would go home. A letter that has been away from home, in nobody's
+    // grip, for STRANDED_S pops back to its place.
+    const size = this.opts.size;
+    for (const b of this.bodies) {
+      const c = b.center(), away = this.t >= b.spawnAt && !b.grab && (Math.abs(c[0] - b.homeX - b.restMean[0]) > size * STRANDED.far || Math.abs(c[2] - b.homeZ - b.restMean[2]) > size * STRANDED.far || b.isFallen());
+      b.awayFor = away ? (b.awayFor || 0) + dt : 0;
+      if (b.awayFor > STRANDED.seconds) { b.awayFor = 0; b.carry = null; b.stray = false; b.cx = b.homeX; b.place(size * .2, 0); sound.boing(480, .3, .1); }
+    }
   }
   tick(dt) {
     // Measure the frames after the first few (which build shaders). Under 30 a second, the see-through pass drops to half

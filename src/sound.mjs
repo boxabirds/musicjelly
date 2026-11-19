@@ -34,7 +34,7 @@ function makeReverb(ctx) {
 }
 
 export function createSound() {
-  const S = { ctx: null, node: null, starting: null, idxOf: {}, count: 0, ready: false, layersLoaded: 0, error: null, squeaks: 0 };
+  const S = { ctx: null, node: null, starting: null, idxOf: {}, count: 0, ready: false, layersLoaded: 0, error: null, squeaks: 0, hushed: false, notes: 0 };      // hushed: the jellies' noises are off (the microphone would hear them); notes: piano notes begun
   const post = (msg, transfer = []) => { if (S.node) S.node.port.postMessage(msg, transfer); };
   async function loadLayer(layer) {
     const roots = []; for (let r = ROOT_LOWEST; r <= ROOT_HIGHEST; r += ROOT_EVERY) roots.push(r);
@@ -70,7 +70,7 @@ export function createSound() {
   }
   // Unix Jelly's boing: a sine that falls in pitch with a wobble on it
   function boing(f = 320, len = 0.35, vol = 0.18) {
-    const c = S.ctx; if (!c || c.state !== 'running') return;
+    const c = S.ctx; if (!c || c.state !== 'running' || S.hushed) return;
     const o = c.createOscillator(), g = c.createGain(), lfo = c.createOscillator(), lg = c.createGain(), t = c.currentTime;
     o.type = 'sine'; o.frequency.setValueAtTime(f * 1.6, t); o.frequency.exponentialRampToValueAtTime(f * 0.55, t + len);
     lfo.frequency.value = 18; lg.gain.value = f * 0.08; lfo.connect(lg).connect(o.frequency);
@@ -80,7 +80,7 @@ export function createSound() {
   // A small squeak: a short high note that slides up and back, like a toy being pinched.
   const SQUEAK = { from: 1250, to: 2300, back: 1700, upS: 0.05, lenS: 0.13, vol: 0.07, attackS: 0.008 };
   function squeak() {
-    S.squeaks++; const c = S.ctx; if (!c || c.state !== 'running') return;
+    S.squeaks++; const c = S.ctx; if (!c || c.state !== 'running' || S.hushed) return;
     const o = c.createOscillator(), g = c.createGain(), t = c.currentTime, Q = SQUEAK;
     o.type = 'triangle'; o.frequency.setValueAtTime(Q.from, t); o.frequency.exponentialRampToValueAtTime(Q.to, t + Q.upS); o.frequency.exponentialRampToValueAtTime(Q.back, t + Q.lenS);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Q.vol, t + Q.attackS); g.gain.exponentialRampToValueAtTime(0.0001, t + Q.lenS);
@@ -90,7 +90,11 @@ export function createSound() {
     state: S,
     // call from a tap or a computer key; safe to call again
     start() { if (!S.starting) S.starting = begin().catch(e => { S.error = String(e && e.message || e); }); else if (S.ctx && S.ctx.state === 'suspended') S.ctx.resume(); return S.starting; },
-    noteOn(midi, vel) { if (S.ready && midi >= MIDI_LOWEST && midi <= MIDI_HIGHEST) post({ type: 'note', on: true, midi, vel }); },
+    noteOn(midi, vel) { if (S.ready && midi >= MIDI_LOWEST && midi <= MIDI_HIGHEST) { S.notes++; post({ type: 'note', on: true, midi, vel }); } },
+    // the context, made at the first start() (the microphone needs it)
+    context: () => S.ctx,
+    // the jellies' boings and squeaks off or on (the piano is not affected)
+    hush(on) { S.hushed = on; },
     noteOff(midi) { if (S.ready) post({ type: 'note', on: false, midi }); },
     pedal(down) { if (S.ready) post({ type: 'pedal', down }); },
     boing, squeak,

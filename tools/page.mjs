@@ -21,11 +21,38 @@ function fakeMidi(names) {
   names.forEach(n => F.plug(n));
   navigator.requestMIDIAccess = async () => access;
 }
-// keyboards: the names of the MIDI keyboards plugged in when the page opens
-export async function openPage({ width = 1280, height = 720, query = '', keyboards = ['Test Keys'] } = {}) {
+// A pretend microphone, put in before the page loads: the page's request for the microphone is answered with a sound
+// stream the test plays real piano notes into (the app's own samples, shifted to the pitch asked for), so everything
+// from the browser's microphone stream onwards is the real thing. window.__fakeMic.play(midi, seconds, gain).
+function fakeMic() {
+  const ROOTS = { 36: 'C2', 48: 'C3', 60: 'C4', 63: 'Ds4', 66: 'Fs4', 69: 'A4', 72: 'C5', 84: 'C6' }, RELEASE_S = 0.12, HISS = 0.002;
+  let ctx = null, out = null; const buffers = new Map();
+  const F = window.__fakeMic = {
+    asked: 0, constraints: null,
+    async load() { for (const [root, name] of Object.entries(ROOTS)) buffers.set(+root, await ctx.decodeAudioData(await (await fetch(`smp/${name}v9.mp3`)).arrayBuffer())); },
+    play(midi, seconds = 0.4, gain = 1) {
+      const root = [...buffers.keys()].reduce((a, b) => (Math.abs(b - midi) < Math.abs(a - midi) ? b : a)), src = ctx.createBufferSource(), g = ctx.createGain(), t = ctx.currentTime;
+      src.buffer = buffers.get(root); src.playbackRate.value = 2 ** ((midi - root) / 12); g.gain.setValueAtTime(gain, t); g.gain.setValueAtTime(gain, t + seconds); g.gain.linearRampToValueAtTime(0, t + seconds + RELEASE_S);
+      src.connect(g).connect(out); src.start(t); src.stop(t + seconds + RELEASE_S + 0.05);
+    },
+  };
+  navigator.mediaDevices.getUserMedia = async constraints => {
+    F.asked++; F.constraints = constraints;
+    if (!ctx) {
+      ctx = new AudioContext(); out = ctx.createMediaStreamDestination(); await F.load();
+      // a little room noise, always
+      const n = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), d = n.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * HISS;
+      const hiss = ctx.createBufferSource(); hiss.buffer = n; hiss.loop = true; hiss.connect(out); hiss.start();
+    }
+    return out.stream;
+  };
+}
+// keyboards: the names of the MIDI keyboards plugged in when the page opens; microphone: whether there is the pretend microphone
+export async function openPage({ width = 1280, height = 720, query = '', keyboards = ['Test Keys'], microphone = false } = {}) {
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--hide-scrollbars', '--mute-audio', '--autoplay-policy=no-user-gesture-required'] });
   const context = await browser.newContext({ viewport: { width, height } }), page = await context.newPage(), problems = [];
   await page.addInitScript(fakeMidi, keyboards);
+  if (microphone) await page.addInitScript(fakeMic);
   page.on('pageerror', e => problems.push('page error: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) problems.push('console: ' + m.text()); });
   page.on('response', r => { if (r.status() >= 400) problems.push(`${r.status()} ${r.url()}`); });      // says which file, which the console's own message does not

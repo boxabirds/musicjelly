@@ -14,7 +14,10 @@ const LACQUER = { color: 0x0b0b0d, roughness: 0.25, clearcoat: 1, clearcoatRough
 // A key that is down glows: it takes a light's colour as it goes down and shines as brightly as it was struck.
 // `plain`: any key. `named`: a key whose letter the learner has met (its jelly has landed).
 // `kept`: a key the learner found stays this share of the way to green after it comes up, with this much glow.
-const LIGHT = { plain: 0xff8a1e, named: 0x2fd35a, least: 0.18, curve: 1.3, glow: 1.6, kept: 0.85, keptGlow: 0.25 };
+// `wrong`: a key the lesson calls wrong. `hint`: the colour a key flashes to show it is the one wanted.
+const LIGHT = { plain: 0xff8a1e, named: 0x2fd35a, wrong: 0xff3b3b, hint: 0xffd21a, least: 0.18, curve: 1.3, glow: 1.6, kept: 0.85, keptGlow: 0.25 };
+// a hint: the key flashes this many times in this many seconds, to this much glow
+export const HINT = { flashes: 3, seconds: 1.5, glow: 2.2 };
 export const SPREAD_S = 1.6;                                               // the time the keyboard takes to open out to a wider range
 const smooth = u => u * u * (3 - 2 * u), KEY_SHOWS_WITHIN = 1e-4;
 const RAIL_ROUND = 0.004, BED_ROUND = 0.002, ROUND_STEPS = 3;
@@ -35,7 +38,7 @@ export function buildKeys(scene, kb) {
       v.set(n.getX(i) / wide, n.getY(i) - slant / wide * n.getX(i) + lean * n.getZ(i), n.getZ(i)).normalize(); n.setXYZ(i, v.x, v.y, v.z);
     }
   }
-  const plain = new THREE.Color(LIGHT.plain), named = new THREE.Color(LIGHT.named), meshes = new Array(MIDI_SLOTS).fill(null), base = [], force = new Float32Array(MIDI_SLOTS), isNamed = new Uint8Array(MIDI_SLOTS), kept = new Uint8Array(MIDI_SLOTS);
+  const plain = new THREE.Color(LIGHT.plain), named = new THREE.Color(LIGHT.named), wrong = new THREE.Color(LIGHT.wrong), hintColour = new THREE.Color(LIGHT.hint), COLOUR = { plain, right: named, wrong }, hinting = new Float32Array(MIDI_SLOTS), kind = new Array(MIDI_SLOTS).fill(plain), meshes = new Array(MIDI_SLOTS).fill(null), base = [], force = new Float32Array(MIDI_SLOTS), kept = new Uint8Array(MIDI_SLOTS);
   for (let m = MIDI_LOW; m <= MIDI_HIGH; m++) {
     const k = kb.keys[m], mat = new THREE.MeshPhysicalMaterial(k.black ? EBONY : IVORY), mesh = new THREE.Mesh(k.black ? blackGeo : whiteGeo, mat);
     mesh.castShadow = true; mesh.receiveShadow = !k.black;
@@ -54,7 +57,11 @@ export function buildKeys(scene, kb) {
   return {
     group, meshes, drawn,
     // how hard (0..1) a key was last struck (sets how brightly it glows while down), and whether its letter is known
-    strike(midi, vel, known) { force[midi] = vel; isNamed[midi] = known ? 1 : 0; },
+    // how: 'right' (green), 'wrong' (red) or 'plain' (orange)
+    strike(midi, vel, how) { force[midi] = vel; kind[midi] = COLOUR[how] || plain; },
+    // flash a key as a hint
+    hint(midi) { hinting[midi] = HINT.seconds; },
+    hinting: () => Array.from(hinting).map((v, m) => (v > 0 ? m : -1)).filter(m => m >= 0),
     // which keys stay green: the ones the learner has found (a list of MIDI numbers; replaces the last list)
     keep(list) { kept.fill(0); for (const m of list) if (m !== null) kept[m] = 1; },
     kept: () => Array.from(kept).map((v, m) => (v ? m : -1)).filter(m => m >= 0),
@@ -65,11 +72,15 @@ export function buildKeys(scene, kb) {
       const wide = drawn.right - drawn.left, mid = (drawn.left + drawn.right) / 2;
       rail.scale.x = bed.scale.x = wide; rail.position.x = bed.position.x = mid;
       for (let m = MIDI_LOW; m <= MIDI_HIGH; m++) {
-        const mesh = meshes[m], k = kb.keys[m], d = kb.down[m], mat = mesh.material, v = d * (LIGHT.least + (1 - LIGHT.least) * force[m] ** LIGHT.curve), colour = isNamed[m] ? named : plain;
+        const mesh = meshes[m], k = kb.keys[m], d = kb.down[m], mat = mesh.material, v = d * (LIGHT.least + (1 - LIGHT.least) * force[m] ** LIGHT.curve), colour = kind[m];
         mesh.visible = k.x0 >= drawn.left - KEY_SHOWS_WITHIN && k.x1 <= drawn.right + KEY_SHOWS_WITHIN;
         mesh.rotation.x = d * KEY.swing;
         const stay = kept[m] ? LIGHT.kept : 0, tint = kept[m] ? named : colour;
         mat.color.copy(base[m]).lerp(tint, Math.max(d, stay)); mat.emissive.copy(tint); mat.emissiveIntensity = Math.max(LIGHT.glow * v, kept[m] ? LIGHT.keptGlow : 0);
+        if (hinting[m] > 0) {                               // the hint's flashes ride over whatever the key shows
+          hinting[m] = Math.max(0, hinting[m] - dt); const on = Math.sin(Math.PI * HINT.flashes * (1 - hinting[m] / HINT.seconds)) ** 2;
+          mat.color.lerp(hintColour, on); mat.emissive.lerp(hintColour, on); mat.emissiveIntensity = Math.max(mat.emissiveIntensity, HINT.glow * on);
+        }
       }
     },
   };

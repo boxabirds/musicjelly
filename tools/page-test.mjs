@@ -121,7 +121,7 @@ T.ok(new Set(s.colours.map(c => c[1])).size === 7, 'seven jellies, seven colours
 T.ok(s.keysSeen === 12 && s.kept.join() === String(C4), '12 keys drawn, and C is still green', `${s.keysSeen} keys, green: ${s.kept.join(' ')}`);
 await shot('8-names');
 // --- the game
-const EMPTY = { x: 90, y: 640 };                           // a spot on the table, away from keys and jellies
+const EMPTY = { x: 300, y: 650 };                           // a spot on the table, away from keys and jellies
 await page.mouse.move(EMPTY.x, EMPTY.y); await page.mouse.down(); await page.mouse.move(EMPTY.x + 200, EMPTY.y - 60, { steps: 8 }); await page.mouse.up(); await page.mouse.wheel(0, 300); await wait(100); s = await state();
 T.ok(s.panel === 'names' && s.orbit.az === 0 && s.orbit.zoom === 1 && !s.orbit.free, 'before the hand, a drag or the wheel on empty space neither flies the camera nor goes on');
 await page.mouse.click(EMPTY.x, EMPTY.y); s = await state();
@@ -184,6 +184,7 @@ let brushed = 0; const handDown = await until(async () => { const q = await stat
 s = await state();
 T.ok(handDown >= 0 && s.hand.shown, 'the right hand comes down over the keys', `${handDown} ms`);
 T.ok(s.hand.miss.every(m => m < MM), 'each fingertip is on its key, thumb on C to little finger on G', s.hand.miss.map(m => (m * 1000).toFixed(2)).join(' ') + ' mm off');
+T.ok(s.hand.numbers.length === 5 && s.hand.numbers.every(n => n.shown && n.played < 0.05), 'each finger wears its number, 1 on the thumb to 5 on the little finger');
 T.ok(brushed > SIZE * 0.2, 'on its way down it knocks the jellies under it about', brushed >= 1 ? 'one fell over' : `${(brushed * 1000).toFixed(0)} mm`);
 T.ok(s.viewDeg > 55, 'the camera has risen to look down on the fingers', s.viewDeg.toFixed(0) + ' degrees');
 // the helicopter: once round the hand and back
@@ -209,15 +210,54 @@ const octaves = [1, 0, -2, 2, -1];
 for (let a = 0; a < HAND_KEYS.length; a++) {
   const key = HAND_KEYS[a], before = await state(), restTip = before.hand.tipY[a], restY = before.letters.find(l => l.key === key).y;
   await send(NOTE_ON, key + OCTAVE * octaves[a], FORCE); let low = restTip, jolt = 0, green = false;
-  for (let i = 0; i < 8; i++) { await wait(25); const q = await state(); low = Math.min(low, q.hand.tipY[a]); jolt = Math.max(jolt, Math.abs(q.letters.find(l => l.key === key).y - restY)); green ||= litOf(q, key) === GREEN; }
+  let numberUp = 0;
+  for (let i = 0; i < 8; i++) { await wait(25); const q = await state(); low = Math.min(low, q.hand.tipY[a]); numberUp = Math.max(numberUp, q.hand.numbers[a].played); jolt = Math.max(jolt, Math.abs(q.letters.find(l => l.key === key).y - restY)); green ||= litOf(q, key) === GREEN; }
   await send(NOTE_OFF, key + OCTAVE * octaves[a], 0); await wait(GAP_MS); s = await state();
-  T.ok(green && restTip - low > 0.01 && jolt > 0.003 && s.kept.includes(key), `${'CDEFG'[a]}: green, finger ${a + 1} goes down with the key, its jelly is jostled, and the key stays green`, `finger ${((restTip - low) * 1000).toFixed(0)} mm, jelly ${(jolt * 1000).toFixed(0)} mm`);
+  T.ok(numberUp > 0.8 && (await state()).hand.numbers.every((n, k) => k === a || n.played < 0.2), `${'CDEFG'[a]}: number ${a + 1} rises and grows as its finger plays, the others stay`, numberUp.toFixed(2));
+  T.ok(green && restTip - low > 0.01 && jolt > 0.003 && (a === HAND_KEYS.length - 1 || s.kept.includes(key)), `${'CDEFG'[a]}: green, finger ${a + 1} goes down with the key, its jelly is jostled, and the key stays green`, `finger ${((restTip - low) * 1000).toFixed(0)} mm, jelly ${(jolt * 1000).toFixed(0)} mm`);
   if (a === 2) await shot('15-hand-playing');
 }
-T.ok(s.done && s.kept.join() === HAND_KEYS.join(), 'all five played: the lesson is done, C to G green', s.kept.join(' '));
-const again = await until(async () => { const q = await state(); return q.letters.every(l => onLedge(l, q) && l.asleepPhysics); }, HOME_AGAIN_WITHIN_MS, 200);
-T.ok(again >= 0, 'and the jellies are on the fingers again afterwards', again >= 0 ? `${(again / 1000).toFixed(1)} s after the last key` : JSON.stringify((await state()).letters.map(l => [l.letter, +(l.x - l.homeX).toFixed(3), +l.y.toFixed(3), +l.z.toFixed(3), l.fallen])));
-await shot('16-hand-done');
+// --- repeat after me
+T.ok(s.panel === 'repeat' && s.text === 'Repeat after me' && !s.done && s.kept.length === 0, 'all five played: the game "Repeat after me" begins, with no key green', s.text);
+const RED = 0xff3b3b, BEAT_MS = 500, ROUNDS = ['CD', 'CDE', 'CDEF', 'CDEFG', 'DC', 'EDC', 'FEDC', 'GFEDC'], TURN_WITHIN_MS = 12000;
+// watch the hand play a round: which keys go down, when, and how far the fingers go; ends when it is the learner's turn
+const watchDemo = async () => { const seen = [], times = []; let text = '', dip = 0; const rest = (await state()).hand.tipY; const ok = await until(async () => { const q = await state(); for (const [m, v] of q.keysDown) if (v === 1 && seen.at(-1) !== m) { seen.push(m); times.push(Date.now()); } q.hand.tipY.forEach((y, a) => { dip = Math.max(dip, rest[a] - y); }); if (q.repeat.playing) text = q.text; return q.repeat.turn; }, TURN_WITHIN_MS, 20); return { ok, seen, times, text, dip }; };
+let demo = await watchDemo(); s = await state();
+T.ok(demo.ok >= 0 && demo.seen.join() === '60,62', 'the hand plays C then D', demo.seen.join(' '));
+T.ok(Math.abs(demo.times[1] - demo.times[0] - BEAT_MS) < 120, 'a beat apart at 120 beats a minute', `${demo.times[1] - demo.times[0]} ms`);
+T.ok(demo.dip > 0.01 && demo.text === 'Repeat after me', 'its fingers go down with the keys, under the words "Repeat after me"', `${(demo.dip * 1000).toFixed(0)} mm`);
+T.ok(s.text === 'Your turn!', 'then the panel says "Your turn!"', s.text);
+const plinth = q => q.letters.every(l => l.y > 0.08 && Math.abs(l.x - l.homeX) < HOME_WITHIN && l.z < -0.3 && !l.fallen);
+const seated = await until(async () => plinth(await state()), HOME_AGAIN_WITHIN_MS, 200); s = await state();
+T.ok(seated >= 0, 'the seven jellies sit on the black plinth, each behind its own key', seated >= 0 ? s.letters.map(l => `${l.letter} ${(l.y * 1000).toFixed(0)}`).join(', ') + ' mm up' : JSON.stringify(s.letters.map(l => [l.letter, +(l.x - l.homeX).toFixed(3), +l.y.toFixed(3), +l.z.toFixed(3), l.fallen])));
+const spots2 = []; for (const l of s.letters) spots2.push(await page.evaluate(k => window.__mj.screen(k), l.key));
+T.ok(spots2.every(p2 => p2.x > 0 && p2.x < WIDTH && p2.y > 190 && p2.y < HEIGHT), 'and the picture shows them there, below the panel', spots2.map(p2 => p2.y.toFixed(0)).join(' '));
+await shot('17a-repeat-your-turn');
+// wrong keys: red; the third brings a hint on the right key
+await send(NOTE_ON, D4, FORCE); await wait(HOLD_MS); s = await state();
+T.ok(litOf(s, D4) === RED && s.repeat.at === 0, 'a wrong key (D when C is due) lights red and is not taken'); await shot('17b-wrong-red');
+await send(NOTE_OFF, D4, 0); await wait(GAP_MS);
+await play(E5); T.ok((await state()).hinting.length === 0, 'two wrong keys: no hint yet');
+await send(NOTE_ON, A4, FORCE); await wait(60); s = await state();
+T.ok(litOf(s, A4) === RED && s.hinting.join() === String(C4), 'the third wrong key: the right key, C, begins to flash', s.hinting.join(' '));
+await send(NOTE_OFF, A4, 0);
+{ // count the flashes from the picture itself: how yellow the C key is, frame by frame
+  const flashes = await page.evaluate(async key => { const mat = window.__mj.keys.meshes[key].material; let n = 0, was = false, t0 = performance.now(); while (performance.now() - t0 < 1900) { await new Promise(requestAnimationFrame); const yellow = mat.emissiveIntensity > 1 && mat.emissive.r > 0.8 && mat.emissive.g > 0.5 && mat.emissive.b < 0.3; if (yellow && !was) n++; was = yellow; } return n; }, C4);
+  T.ok(flashes === 3 && (await state()).hinting.length === 0, 'it flashes yellow three times and stops', `${flashes} flashes`);
+}
+await send(NOTE_ON, C5, FORCE); await wait(HOLD_MS); T.ok(litOf(await state(), C4) === GREEN, 'the right key (C, another octave) lights green'); await send(NOTE_OFF, C5, 0); await wait(GAP_MS);
+await play(D4); s = await state();
+T.ok(s.repeat.round === 1 && !s.repeat.turn && s.text === 'Repeat after me', 'C D played back: the hand\'s turn again', s.text);
+for (let r = 1; r < ROUNDS.length; r++) {
+  demo = await watchDemo(); const want = [...ROUNDS[r]].map(L => KEY_OF[L]).join();
+  const okDemo = demo.ok >= 0 && demo.seen.join() === want;
+  for (const L of ROUNDS[r]) await play(KEY_OF[L] + OCTAVE * (r % 3 - 1));
+  s = await state();
+  T.ok(okDemo && (r < ROUNDS.length - 1 ? s.repeat.round === r + 1 : s.done), `round ${r + 1}: the hand plays ${[...ROUNDS[r]].join(' ')}, and played back it ${r < ROUNDS.length - 1 ? 'goes on' : 'ends the lesson'}`, demo.seen.join(' '));
+  if (r === 3) await shot('17c-repeat-five');
+}
+T.ok(s.done && s.text === 'Repeat after me', 'eight rounds done');
+await shot('17d-repeat-done');
 // --- the learner flies the camera
 {
   const before = (await state()).cameraAt;
@@ -225,13 +265,46 @@ await shot('16-hand-done');
   T.ok(Math.abs(s.orbit.az) > 0.5 && Math.abs(s.orbit.tilt) > 0.1 && Math.hypot(...s.cameraAt.map((v, k) => v - before[k])) > 0.1, 'with the hand there, a drag on empty space circles and tilts the camera', `${(s.orbit.az * 180 / Math.PI).toFixed(0)} degrees round, ${(s.orbit.tilt * 180 / Math.PI).toFixed(0)} tilted`);
   await page.mouse.wheel(0, -500); await wait(100); s = await state();
   T.ok(s.orbit.zoom < 0.7, 'the wheel comes closer', `to ${s.orbit.zoom.toFixed(2)} of the distance`);
-  await shot('17-flown');
+  await shot('18-flown');
   await page.mouse.dblclick(EMPTY.x, EMPTY.y); await wait(100); s = await state();
   T.ok(s.orbit.az === 0 && s.orbit.tilt === 0 && s.orbit.zoom === 1, 'a double tap on empty space puts the picture back');
   const c = await page.evaluate(k => window.__mj.screen(k), 69);
   await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(c.x + 60, c.y + 40, { steps: 8 }); await wait(200); s = await state(); await page.mouse.up();
   const a = s.letters.find(l => l.key === 69);
   T.ok(s.orbit.az === 0 && Math.hypot(a.x - a.homeX, a.z) > SIZE * 0.3, 'a drag that starts on a jelly still drags the jelly, not the camera', `${(Math.hypot(a.x - a.homeX, a.z) * 1000).toFixed(0)} mm`);
+}
+// --- the side list, the trail, and trying again
+{
+  s = await state(); const NAMES = ['Introducing the Octave', 'The other white letters', 'Hand position', 'Repeat after me'];
+  T.ok(s.side.map(b => b[0].replace(/^\d/, '')).join('|') === NAMES.join('|'), 'the side lists the four lessons', s.side.map(b => b[0]).join(' | '));
+  T.ok(s.side.map(b => b[1]).join() === 'done,done,done,now-done', 'all four are ticked, the learner having been through them, and the last is marked as where he is', s.side.map(b => b[1]).join(' '));
+  T.ok(s.trail[0] === '4. Repeat after me', 'the trail along the top says which lesson', s.trail.join(' › '));
+  const box = await page.evaluate(() => { const r = id => document.querySelector(id).getBoundingClientRect(); return { side: r('#side'), trail: r('#trail'), panel: r('#panel'), stage: r('#stage') }; });
+  T.ok(box.side.left === 0 && box.side.right <= box.panel.left && box.trail.bottom <= box.panel.top && box.panel.bottom <= box.stage.top + 1, 'the list is on the left, the trail above the panel, the panel above the picture');
+  await page.click('#retry'); s = await state();
+  T.ok(s.panel === 'repeat' && s.repeat.round === 0 && !s.done && s.letters.length === 7 && s.side[3][1].startsWith('now'), 'Retry begins "Repeat after me" again: round one, seven letters', `round ${s.repeat.round + 1}`);
+  const handBack = await until(async () => { const q = await state(); return q.hand.landed && q.repeat.turn && q.letters.every(l => l.y > 0.08 && l.z < -0.3); }, 20000, 200); s = await state();
+  T.ok(handBack >= 0 && !s.orbit.flying && s.orbit.az === 0, 'the hand is there, the letters are on the plinth, it has played C D and it is the learner\'s turn; no helicopter this time');
+  await shot('19-retry');
+  await page.keyboard.press('Space'); T.ok((await state()).panel === 'repeat', 'the space bar after a click on Retry does not press Retry again or go on');
+  // pick the first lesson
+  await page.click('#lessons button[data-n="0"]'); await wait(2200); s = await state();
+  T.ok(s.panel === 'octave' && s.letters.length === 0 && !s.hand.shown && s.keysSeen === 12 && s.keysDown.length === 0 && s.kept.length === 0, 'picking the first lesson: the keys alone, as at the start', `${s.letters.length} letters, ${s.keysSeen} keys`);
+  T.ok(Math.abs(s.viewDeg - 35) < 0.5 && !s.orbit.free && s.trail.join('|') === '1. Introducing the Octave|1 of 4' && s.side[0][1].startsWith('now') && s.side[3][1] === 'done', 'the picture and the trail are back at the start; lessons done stay ticked', s.trail.join(' › '));
+  await shot('20-picked-first');
+  await page.keyboard.press('Space'); T.ok((await state()).panel === 'first-letter', 'and it plays from there');
+  // pick the second: C is already there, the others fall
+  await page.click('#lessons button[data-n="1"]'); s = await state();
+  T.ok(s.panel === 'names' && s.letters.some(l => l.key === C4) && s.trail[1] === '1 of 3', 'picking the second lesson begins at "All the notes have names...", with C there', s.trail.join(' › '));
+  const seven = await until(async () => { const q = await state(); return q.letters.length === 7 && q.letters.every(l => atHome(l) && l.asleepPhysics); }, OPEN_WITHIN_MS);
+  T.ok(seven >= 0, 'and the other six fall onto their keys', `${(seven / 1000).toFixed(1)} s`);
+  // pick the third: the hand comes as in the lesson
+  await page.click('#lessons button[data-n="2"]'); s = await state();
+  const landed3 = await until(async () => { const q = await state(); return q.hand.shown && q.hand.landed; }, LAND_WITHIN_HAND_MS);
+  s = await state();
+  T.ok(s.panel === 'hand' && landed3 >= 0 && s.letters.length === 7 && s.orbit.flying, 'picking "Hand position": seven letters, the hand comes down and the camera flies round');
+  await page.click('#retry'); await wait(300); s = await state();
+  T.ok(s.panel === 'hand' && !s.hand.landed && s.hand.shown && s.kept.length === 0, 'Retry there brings the hand down again from the top');
 }
 // --- the keyboard is unplugged
 await fake('unplug', FIRST); await wait(100); s = await state();

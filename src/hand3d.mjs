@@ -13,7 +13,8 @@ import { readRig, wearRig } from './piano-hand/righand.mjs';
 import { KEY, STAND_BACK } from './keyboard.mjs';
 
 const RIG_FILE = 'hand/Hand_Nails_R.gltf', RIGHT = 1, FINGERS = 5;
-const SKIN = { color: 0xd9a587, roughness: 0.6, metalness: 0, sheen: 0.3, sheenRoughness: 0.6 }, NAIL = { color: 0xf0d9cc, roughness: 0.16, clearcoat: 0.7, clearcoatRoughness: 0.2 };
+// The hand is the yellow of a cartoon hand, so that it is nobody's skin in particular (the owner, 19 Nov 2026).
+const SKIN = { color: 0xffd90f, roughness: 0.6, metalness: 0, sheen: 0.3, sheenRoughness: 0.6 }, NAIL = { color: 0xffeb85, roughness: 0.16, clearcoat: 0.7, clearcoatRoughness: 0.2 };
 // Skin takes little of the bright room all round (which on its own washes it flat, as the piano found): the room's
 // share is SKIN_ROOM, and the hand's shape is drawn by the lamps instead (main.mjs HAND_LIGHT).
 const SKIN_ROOM = 0.22;
@@ -26,6 +27,17 @@ const PALM_BALL = 0.016, WRIST_BALL = 0.024, BALLS = FINGERS * 7 + 1 + (FINGERS 
 // a ledge: as wide as its key, this far either side of the home line (metres, before scaling), this far above the
 // highest ball over it, and going down by this share of what the key under it goes down
 const LEDGE = { halfDeep: 0.013, above: 0.0015, follow: 0.7 };
+// Finger numbers, as in the piano simulator: 1 for the thumb to 5 for the little finger. Each sits just above its
+// fingertip, always facing the viewer and drawn over the hand; when its finger plays it rises and grows.
+// Sizes are metres before scaling, like the hand.
+const NUMBER = { tall: 0.016, above: 0.012, rise: 0.014, grow: 0.45, easeS: 0.08, px: 128, font: '"Titan One", "Arial Rounded MT Bold", system-ui, sans-serif', fill: '#ffffff', ink: '#24133b', line: 0.14 };
+function numberSprite(n) {
+  const c = document.createElement('canvas'); c.width = c.height = NUMBER.px; const g = c.getContext('2d');
+  g.font = `${NUMBER.px * 0.78}px ${NUMBER.font}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+  g.lineWidth = NUMBER.px * NUMBER.line; g.strokeStyle = NUMBER.ink; g.strokeText(String(n), NUMBER.px / 2, NUMBER.px * 0.54); g.fillStyle = NUMBER.fill; g.fillText(String(n), NUMBER.px / 2, NUMBER.px * 0.54);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true, toneMapped: false })); sp.renderOrder = 10; sp.visible = false; return sp;
+}
 const smooth = u => u * u * (3 - 2 * u);
 
 // keys: the five keys the fingers rest on, thumb first (MIDI numbers of white keys next to each other)
@@ -43,6 +55,7 @@ export async function buildHand3d(scene, kb, keys) {
   // how far down key m's top is where finger a rests on it (metres): the key turns about its back end
   const dipAt = (m, a) => kb.down[m] * KEY.swing * (KEY.whiteLong + LAND_Z[a]);
   const P = { n: 0, x: new Float64Array(BALLS), y: new Float64Array(BALLS), z: new Float64Array(BALLS), r: new Float64Array(BALLS), lo: [0, 0, 0], hi: [0, 0, 0], moving: false };
+  const numbers = keys.map((m, a) => { const sp = numberSprite(a + 1); scene.add(sp); return sp; }), played = new Float32Array(FINGERS);      // played: 0 resting .. 1 its key is down, eased
   const v = new THREE.Vector3(), w = new THREE.Vector3(), state = { shown: false, u: 0, landed: false, lastSum: NaN };
   const ball = (p, r) => { fromHand(M, p, v); const i = P.n++; P.x[i] = v.x * s; P.y[i] = v.y * s + group.position.y; P.z[i] = v.z * s; P.r[i] = r * s; };
   function balls() {
@@ -69,7 +82,7 @@ export async function buildHand3d(scene, kb, keys) {
     // about how high the top of the hand is above the keys, in the world (before it has landed and the ledges are known)
     top: (wrist.y + WRIST_BALL) * s,
     show() { state.shown = true; state.u = 0; state.landed = false; group.visible = true; },
-    hide() { state.shown = false; group.visible = false; P.n = 0; },
+    hide() { state.shown = false; group.visible = false; P.n = 0; numbers.forEach(sp => { sp.visible = false; }); },
     ledges,
     // dt: seconds. Returns true in the one frame the hand finishes arriving.
     update(dt) {
@@ -79,11 +92,19 @@ export async function buildHand3d(scene, kb, keys) {
       let sum = state.u; for (let a = 0; a < FINGERS; a++) { const d = dipAt(keys[a], a); tips[a].y = FR[a][3] * TIP_SEAT - d; sum += d; }
       P.moving = sum !== state.lastSum; state.lastSum = sum;
       if (P.moving || !P.n) { setPalm(M, none, none); archThumb(M, 0); poseHand(M, tips); skinOver(H, elbow); balls(); }
+      // the numbers ride their fingertips
+      for (let a = 0; a < FINGERS; a++) {
+        const sp = numbers[a], to = kb.down[keys[a]] > 0 ? 1 : 0; played[a] += (to - played[a]) * (1 - Math.exp(-dt / NUMBER.easeS));
+        fromHand(M, M.fingers[a].E, v); const tall = NUMBER.tall * s * (1 + NUMBER.grow * played[a]);
+        sp.position.set(v.x * s, v.y * s + group.position.y + (FR[a][3] + NUMBER.above + NUMBER.rise * played[a]) * s + tall / 2, v.z * s); sp.scale.set(tall, tall, 1); sp.visible = true;
+      }
       if (was < 1 && state.u >= 1) { state.landed = true; return true; }
       return false;
     },
     // for the tests: how far each fingertip is from where it was asked to be (metres), and the balls
     miss: () => M.fingers.map(f => f.miss),
+    // the finger numbers: whether each shows, and how far it has risen and grown (0 resting .. 1 playing)
+    numbers: () => numbers.map((sp, a) => ({ shown: sp.visible, played: played[a], y: sp.position.y, tall: sp.scale.y })),
     // how high each fingertip's centre is above the keys' tops, in the world
     tipY: () => M.fingers.map(f => fromHand(M, f.E, v).y * s + group.position.y),
   };

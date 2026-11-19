@@ -1,5 +1,5 @@
 // The lesson's rules, played through without a page: node tools/flow-test.mjs
-import { createFlow, PANELS, lidFor, shuffled, DROWSY_AFTER, ASLEEP_AFTER } from '../src/flow.mjs';
+import { createFlow, PANELS, lidFor, shuffled, roundsOf, DROWSY_AFTER, ASLEEP_AFTER } from '../src/flow.mjs';
 import { keysNamed } from '../src/keyboard.mjs';
 import { checker } from './check.mjs';
 const T = checker('the lesson flow'), types = fx => fx.map(e => e.type).join(' ');
@@ -79,8 +79,47 @@ const C4 = 60, C5 = 72, C3 = 48, D4 = 62, E5 = 76, F_SHARP = 66;
   f.key(E5); f.key(G2); f.key(D4);
   T.ok(f.state.each.size === 4 && !f.state.done, 'four of the five, in any order: not yet');
   const end = f.key(65);
-  T.ok(end.at(-1).type === 'finished' && f.state.done, 'the fifth finishes the lesson', types(end));
-  T.ok(types(f.key(C4)) === 'squeak lid' && types(f.tap()) === '', 'afterwards a letter still squeaks and a tap does nothing');
+  // repeat after me
+  T.ok(f.panel().id === 'repeat' && f.panel().text === 'Repeat after me' && !f.state.done, 'the fifth brings the game "Repeat after me"', types(end));
+  T.ok(end.some(e => e.type === 'plinth') && f.state.found.size === 0, 'the letters go to the plinth, and no key is green');
+  const rounds = roundsOf('CDEFG').map(r => r.join(''));
+  T.ok(rounds.join(' ') === 'CD CDE CDEF CDEFG DC EDC FEDC GFEDC', 'its rounds are the owner\'s: up to all five, then back down', rounds.join(' '));
+  let d = end.find(e => e.type === 'demo');
+  T.ok(d && d.letters.join('') === 'CD' && d.bpm === 120, 'the hand plays C D first, at 120 beats a minute', JSON.stringify(d));
+  T.ok(f.judge(C4) === 'plain' && types(f.key(C4)) === '', 'while the hand plays, the learner\'s keys are not judged');
+  let fx2 = f.demoDone();
+  T.ok(fx2[0].type === 'say' && fx2[0].text === 'Your turn!' && f.state.turn, 'then "Your turn!"', JSON.stringify(fx2[0]));
+  T.ok(f.judge(C5) === 'right' && f.judge(D4) === 'wrong' && f.judge(F_SHARP) === 'wrong', 'now C (any octave) is right and anything else is wrong');
+  const KEYS = { C: 60, D: 62, E: 64, F: 65, G: 67 };
+  let w = f.key(D4); T.ok(types(w) === 'wrong' && f.state.at === 0, 'a wrong key is called wrong and the note due does not change', types(w));
+  w = f.key(E5); T.ok(types(w) === 'wrong', 'a second wrong key: no hint yet');
+  w = f.key(F_SHARP); T.ok(types(w) === 'wrong hint' && w[1].letter === 'C', 'the third wrong key brings a hint for the key that is due', JSON.stringify(w));
+  w = f.key(C5); T.ok(types(w) === 'right' && f.state.at === 1 && f.state.wrongs === 0, 'the right key moves on, and the count of wrong keys starts again');
+  w = f.key(D4); d = w.find(e => e.type === 'demo');
+  T.ok(w.some(e => e.type === 'round') && d && d.letters.join('') === 'CDE' && !f.state.turn && w.some(e => e.type === 'say' && e.text === 'Repeat after me'), 'C D done: the hand plays C D E next', types(w));
+  // play every remaining round through
+  let lastFx = [];
+  for (let r = 1; r < rounds.length; r++) { f.demoDone(); for (const L of rounds[r]) lastFx = f.key(KEYS[L] + (r % 2 ? 12 : -12)); }
+  T.ok(lastFx.some(e => e.type === "finished") && f.state.done && f.state.round === rounds.length, "after G F E D C the lesson is finished", types(lastFx));
+  T.ok(types(f.key(C4)) === '' && types(f.tap()) === '' && types(f.demoDone()) === '', 'afterwards nothing more happens');
+}
+{ // lessons: picking one from the side, and trying one again
+  const f = createFlow(); f.start();
+  T.ok(f.lessons.map(L => L.name).join(' | ') === 'Introducing the Octave | The other white letters | Hand position | Repeat after me', 'there are four lessons', f.lessons.map(L => L.name).join(' | '));
+  let fx = f.jump(1), reset = fx[0], place = fx.find(e => e.type === 'place');
+  T.ok(reset.type === 'reset' && reset.letters.join('') === 'C' && !reset.hand && f.panel().id === 'names', 'picking the second begins at its first panel, with C already on its key', JSON.stringify(reset));
+  T.ok(place.lesson === 1 && place.step === 1 && place.steps === 3 && fx.some(e => e.type === 'drop' && e.letters.join('') === 'DEFGAB'), 'step 1 of 3, and the six others fall as they do in the lesson');
+  T.ok(f.knows(62) && f.state.found.size === 0, 'the learner is taken to know the letters so far; nothing is green');
+  f.tap(); T.ok(f.panel().id === 'game' && f.lesson() === 1, 'it plays on from there');
+  fx = f.jump(1); T.ok(f.panel().id === 'names' && f.state.letters.join('') === 'CDEFGAB' && f.state.at === 0, 'trying it again goes back to its first panel');
+  fx = f.jump(3); reset = fx[0];
+  T.ok(reset.letters.join('') === 'CDEFGAB' && reset.hand.join('') === 'CDEFG' && fx.some(e => e.type === 'demo') && fx.some(e => e.type === 'plinth'), 'picking "Repeat after me" begins with all seven letters and the hand already there', JSON.stringify(reset));
+  fx = f.jump(2); T.ok(f.panel().id === 'hand' && fx.some(e => e.type === 'hand') && !fx[0].hand, 'picking "Hand position" brings the hand in as the lesson does');
+  fx = f.jump(0); T.ok(f.panel().id === 'octave' && fx[0].letters.length === 0 && !f.knows(60), 'picking the first starts from nothing');
+  T.ok(f.jump(9).length === 0, 'there is no tenth lesson');
+  // finished lessons are remembered as the learner goes through
+  const g = createFlow(); g.start(); g.tap(); g.tap(); g.key(60); g.key(72); const into2 = g.key(48);
+  T.ok(into2.find(e => e.type === 'place').finished.join() === '0' && g.lesson() === 1, 'going on into the second lesson marks the first as finished');
 }
 T.ok(lidFor(0) === 0 && lidFor(ASLEEP_AFTER + 5) === 1, 'lids stay between open and shut');
 T.ok(PANELS.filter(p => p.next === 'keys').every(p => p.letter && p.find > 0), 'every panel that waits for keys says which letter and how many');

@@ -61,9 +61,40 @@ Read README.md for how to run and test.
   space still goes on; a drag that starts on a jelly drags the jelly.
 - Seen once in a still taken while the hand was landing: a jelly's eyes with no body to be seen near them. Probably a
   jelly pulled thin between the hand's balls and a ledge (thin jelly is nearly clear). Not looked into.
+- Repeat after me (`next: 'repeat'`, `roundsOf`): the hand plays a round at 120 beats a minute (main.mjs `playDemo`,
+  on the picture's clock), main calls `flow.demoDone()`, the panel says "Your turn!", and the learner plays it back.
+  `flow.judge` says how a pressed key lights: right green, wrong red (only here), plain orange. Three wrong keys for
+  one note flash the right key yellow three times (`keys.hint`, HINT). The letters sit on the rail (`b.homeZ`): the
+  jelly bounds therefore reach behind the rail. The hand is cartoon yellow so it is nobody's skin (owner).
+- In scripted edits, never put a `//` comment in the middle of a dense line: it swallowed `this.lidNow = 0` once.
+- Lessons (flow.mjs LESSONS): runs of panels. The side list (`#lessons`) picks one, the trail along the top says where
+  the learner is, and Retry begins the current one again: all three call `flow.jump(n)`, whose `reset` effect makes
+  main.mjs clear everything (`clearAll`) and put the letters that lesson begins with on their keys. `fresh` counts
+  resets so that timers and the hand's loading from before a reset do nothing after it. Lesson names are the owner's
+  phrases from the panels; he has not confirmed them as names.
+- Stranded letters (jelly.mjs STRANDED): tidying waits for every letter to be still, and one caught under the hand
+  never is; so a letter away from home and ungripped for 8 s pops home. Without it the hand step sometimes left four
+  letters on the table for good (seen in one test run in three).
+- Finger numbers (hand3d.mjs NUMBER): a sprite over each fingertip, 1 thumb to 5 little finger, drawn over the hand;
+  it rises and grows while its key is down.
 - A key lights green only if the lesson is asking for it (`flow.wants`); otherwise orange. Found keys stay green.
 
+- Microphone (version 1: one note at a time). src/listen.mjs is the detector, pure: windows of sound in, key down and
+  key up events out (McLeod pitch method, then rules for a note beginning, changing, being struck again and dying
+  away; each rule's comment says which wrong hearing it prevents). src/mic.mjs reads the microphone through an
+  AnalyserNode once a picture frame (nothing on the audio thread) and asks the browser for no echo cancelling, noise
+  suppression or automatic gain. main.mjs feeds its events to the same `heard()` as MIDI. In microphone mode the page
+  does not sound the learner's notes, the jellies' noises are off (`sound.hush`), and it does not listen while the
+  hand plays (DEAF). tools/listen-test.mjs runs the detector on the app's own piano samples; tools/mic-test.mjs plays
+  those samples into a pretend microphone stream in the page. Both are clean studio sound.
+  It is JavaScript, not yet the Rust core the owner has in mind: the rules were still changing.
+
+- index.html writes its own import map with a time stamp on each of the page's modules (the OWN list there), so a
+  reload always gets matching code. Add new modules to that list.
+
 ## Not done, not known
+- The microphone has never heard a real room, a real instrument, or the page's own loudspeaker. Never run on an iPad
+  or in Safari. An iPad needs the page served over https.
 
 - Never run with a real MIDI keyboard or listened to. Latency of the learner's notes is unmeasured.
 - Nothing follows "Well done! You found all the white letters!" yet. The black keys are the owner's to decide.

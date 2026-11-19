@@ -115,6 +115,8 @@ export function createKeyboard(scale, levelFrom = 0, range = FIRST_OCTAVE) {
       floor[i] = carrying[i] || down[i] >= floor[i] ? down[i] : Math.max(down[i], floor[i] - FLOOR_RISE_MOST * dt / dip);
     }
   };
+  // every key up and let go (a lesson begins afresh)
+  K.letGo = () => { down.fill(0); floor.fill(0); held.fill(0); };
   K.heightAt = heightAt; K.resolve = resolve; K.homeX = m => keys[m].x;
   // The key shown for a note the learner plays: while only one octave exists, its key of the same name; with all 88,
   // the key itself. null: no such key is shown.

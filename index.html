@@ -12,13 +12,35 @@
 :root{
   --sky:#d4eeff; --ink:#24133b; --card:#ffffff; --berry:#ff4d6d;
   --display:"Titan One","Arial Rounded MT Bold","Trebuchet MS",system-ui,sans-serif;
-  --panel-h:clamp(120px,26vh,240px);
+  --panel-h:clamp(120px,26vh,240px); --side:210px; --num:28px;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{background:var(--sky);color:var(--ink);font-family:var(--display);overflow:hidden;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
+body{background:var(--sky);color:var(--ink);font-family:var(--display);overflow:hidden;display:flex;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+/* the side: the lessons, to pick from. The one being done is marked; ones got through are ticked. */
+#side{flex:0 0 var(--side);background:var(--ink);color:#fff;padding:18px 12px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+#brand{font-size:1.45rem;line-height:1;padding:0 6px}
+#lessons{display:flex;flex-direction:column;gap:6px}
+#lessons button{display:grid;grid-template-columns:var(--num) 1fr;align-items:center;gap:8px;text-align:left;padding:8px 8px;border-radius:12px;border:2px solid transparent;background:transparent;
+  font-family:"Lexend",system-ui,sans-serif;font-weight:600;font-size:.9rem;line-height:1.2;color:#e9e2f5}
+#lessons button:hover{background:#ffffff1a}
+#lessons .num{width:var(--num);height:var(--num);border-radius:50%;display:flex;align-items:center;justify-content:center;background:#ffffff26;font-family:var(--display);font-weight:400}
+#lessons button[data-is^="now"]{background:#fff;color:var(--ink)}
+#lessons button[data-is^="now"] .num{background:var(--berry);color:#fff}
+#lessons button[data-is$="done"] .num{background:#2fd35a;color:#fff;font-size:0}
+#lessons button[data-is$="done"] .num::before{content:"\2713";font-size:1rem}
+#main{flex:1 1 0;min-width:0;display:flex;flex-direction:column}
+/* the trail along the top: where the learner is, and a way to try the lesson again */
+#trail{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px clamp(12px,4vw,60px) 0;font-family:"Lexend",system-ui,sans-serif;font-weight:600;font-size:.9rem}
+#trail .sep{opacity:.45}
+#trail #crumbStep{opacity:.7;font-weight:400}
+#inputInfo{margin-left:auto;opacity:.7;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#micBtn,#retry{padding:5px 14px;border-radius:999px;border:3px solid var(--ink);background:var(--card);font-weight:600}
+#micBtn:hover,#retry:hover{background:#fff7d6}
+body[data-mic="on"] #micBtn{background:#2fd35a;color:#fff}
 /* the message panel: one message at a time, above the keys */
-#panel{flex:0 0 var(--panel-h);margin:clamp(10px,2vh,22px) clamp(12px,4vw,60px) 0;padding:clamp(10px,2vh,22px) clamp(16px,3vw,44px);
+#panel{flex:0 0 var(--panel-h);margin:clamp(6px,1.2vh,14px) clamp(12px,4vw,60px) 0;padding:clamp(10px,2vh,22px) clamp(16px,3vw,44px);
   background:var(--card);border:4px solid var(--ink);border-radius:28px;box-shadow:0 8px 0 var(--ink);
   display:flex;align-items:center;justify-content:center;gap:clamp(12px,2vw,28px);cursor:default;overflow:hidden;user-select:none;-webkit-user-select:none}
 #panelText{font-size:clamp(1.2rem,.9rem + 2.2vh + .9vw,2.8rem);line-height:1.1;text-align:center;text-wrap:balance}
@@ -40,21 +62,35 @@ body{background:var(--sky);color:var(--ink);font-family:var(--display);overflow:
 @media (prefers-reduced-motion:reduce){#panelGo{animation:none}}
 #stage{flex:1 1 0;min-height:0;width:100%;display:block;touch-action:none}
 /* shown over everything while no MIDI keyboard is connected */
-#notice{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;padding:6vw;background:var(--sky);
+#notice{position:fixed;inset:0;z-index:10;display:none;flex-direction:column;gap:1em;align-items:center;justify-content:center;padding:6vw;background:var(--sky);
   font-size:clamp(1.4rem,1rem + 2.4vw,3rem);line-height:1.2;text-align:center;text-wrap:balance}
 body[data-keyboard="no"] #notice{display:flex}
+#noticeMic{font-size:.6em;padding:.5em 1.2em;border-radius:999px;border:4px solid var(--ink);background:var(--card);box-shadow:0 6px 0 var(--ink)}
 /* the piano samples' licence asks for this line */
 #credit{position:fixed;right:10px;bottom:6px;font:400 11px/1.2 "Lexend",system-ui,sans-serif;color:#24133b99;pointer-events:none}
 </style>
-<script type="importmap">
-{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}
+<script>
+// The import map, written here so that every one of the page's own modules is fetched afresh on each load: a browser
+// that kept an old copy of one module beside a new copy of another broke the page ("sound.context is not a function").
+// three.js is not stamped, so it stays cached. A module missing from this list still works; it is just cached as before.
+(() => {
+  const OWN = ['main', 'flow', 'keyboard', 'keys3d', 'jelly', 'sound', 'midi-in', 'hand3d', 'listen', 'mic', 'piano-hand/hand', 'piano-hand/glove', 'piano-hand/righand', 'piano-hand/handmotion', 'piano-hand/fingering'];
+  const stamp = Date.now(), imports = { three: './node_modules/three/build/three.module.js', 'three/addons/': './node_modules/three/examples/jsm/' };
+  for (const f of OWN) imports[new URL(`src/${f}.mjs`, location.href).href] = `./src/${f}.mjs?v=${stamp}`;
+  document.write(`<script type="importmap">${JSON.stringify({ imports })}<\/script>`);
+})();
 </script>
 </head>
 <body>
+<nav id="side" aria-label="Lessons"><div id="brand">Music Jelly</div><div id="lessons"></div></nav>
+<div id="main">
+<div id="trail"><span>Music Jelly</span><span class="sep">›</span><span id="crumbLesson"></span><span class="sep">›</span><span id="crumbStep"></span><span id="inputInfo"></span><button id="micBtn" type="button">Use the microphone</button><button id="retry" type="button">↻ Retry</button></div>
 <div id="panel" role="button" tabindex="0" aria-live="polite"><div id="panelBody"><div id="panelText"></div><div id="panelOrder" hidden></div></div><div id="panelGo" aria-hidden="true"></div></div>
 <canvas id="stage"></canvas>
-<div id="notice" role="alert">Music Jelly requires a MIDI keyboard. Please connect one to this computer.</div>
+</div>
+<div id="notice" role="alert"><div>Music Jelly requires a MIDI keyboard. Please connect one to this computer.</div><button id="noticeMic" type="button">Or use the microphone</button></div>
 <div id="credit">Piano sound: Salamander Grand Piano by Alexander Holm, CC BY 3.0</div>
-<script type="module" src="src/main.mjs"></script>
+<!-- imported, not named in src: only imports go through the import map above -->
+<script type="module">import './src/main.mjs';</script>
 </body>
 </html>
