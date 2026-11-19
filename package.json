@@ -1,0 +1,19 @@
+{
+  "name": "musicjelly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Music Jelly: the piano keyboard for children, taught by jelly letters",
+  "scripts": {
+    "serve": "python3 -m http.server 8770",
+    "font": "node tools/make-font.mjs CDEFGAB > fonts/titan-notes.json",
+    "test": "node tools/flow-test.mjs && node tools/terrain-test.mjs && node tools/page-test.mjs"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "opentype.js": "^1.3.4",
+    "playwright-core": "^1.48.0"
+  }
+}
